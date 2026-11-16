@@ -14,7 +14,7 @@ export const localFileUpload = ({ maxFileSize = 5 } = {}) => {
 
     const storage = multer.memoryStorage()
 
-    return multer({ storage, limits: { fileSize: maxFileSize * 1024 * 1024 } })
+    return multer({ storage, limits: { fileSize: maxFileSize * 1024 * 1024, files: 3, fields: 20, fieldSize: 50 * 1024, parts: 23 } })
 }
 
 export const processFile = async ({ req,customPath = "general", file, validation = [] }) => {

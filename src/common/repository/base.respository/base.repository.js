@@ -5,6 +5,7 @@ export const findOne = async ({
   options = {},
 } = {}) => {
   const doc = model.findOne(filter).select(select);
+  if (options.session) doc.session(options.session);
 
   if (options.populate) {
     doc.populate(options.populate);
@@ -35,6 +36,7 @@ export const createOne = async ({
 
 export const findById = async ({ id, options = {}, model }) => {
   const doc = model.findById(id);
+  if (options.session) doc.session(options.session);
   if (options.select) {
     doc.select(options.select)
   }

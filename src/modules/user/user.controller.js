@@ -7,6 +7,8 @@ import { RoleEnum } from "../../enum/user.gender.js";
 import { fileValidation, localFileUpload } from "../../common/utils/multer/local.multer.js";
 import { uploadMiddleware } from "../../middleware/multer.middleware.js";
 import { Validation } from "../../middleware/validation.middleware.js";
+import { del } from "../../common/services/cache.service.js";
+import { userProfileKey } from "../../common/security/token.security.js";
 import { BadRequestException } from "../../common/exceptions/error.exceptions.js";
 import * as validators from "./user.validation.js";
 import messageController from "../message/message.controller.js";
@@ -29,6 +31,7 @@ router.patch("/profile-image",
         }
         req.user.image = req.file.path;
         await req.user.save();
+        await del({ key: userProfileKey({ userId: req.user._id }) });
         const user = req.user.toObject ? req.user.toObject() : { ...req.user };
         delete user.password;
         return successResponse({ res, data: { user } });

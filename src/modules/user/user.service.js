@@ -56,9 +56,9 @@ export const rotateToken = async (payload,user, issuer) => {
     throw ConflictExecuption("Sorry we cannot new login credentials while current access token still within valid time range",
     );
   }
-  const data = await createLoginCredentials({user , issuer})
-  await creatRevokeToken(payload)
-  return data
+  const consumed = await creatRevokeToken(payload);
+  if (!consumed) throw ConflictExecuption('Login credentials have already been used');
+  return await createLoginCredentials({ user, issuer });
 };
 
 export const logout = async (payload, user, { action = LogoutEnum.DEVICE } = {}) => {

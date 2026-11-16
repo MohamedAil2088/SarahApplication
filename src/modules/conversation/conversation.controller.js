@@ -36,7 +36,7 @@ router.patch(
     Validation(validators.respondToRequest),
     async (req, res) => {
         const data = await service.respondToIdentityRequest(
-            { requestId: req.params.requestId, action: req.body.action },
+            { requestId: req.params.requestId, action: req.validate.body.action },
             req.user
         );
         return successResponse({ res, data });
@@ -57,7 +57,7 @@ router.post(
     "/:conversationId/messages",
     authentication(),
     uploadMiddleware({
-        multerMiddleware: localFileUpload().any("attachments", 3),
+        multerMiddleware: localFileUpload().array("attachments", 3),
         validation: fileValidation.Image,
         customPath: chatFolderName,
         isRequired: false

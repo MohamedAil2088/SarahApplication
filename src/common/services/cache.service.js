@@ -211,3 +211,31 @@ export const persist = async ({key}) => {
 export const randomKey = async () => {
     return await client.randomKey();
 };
+// Redis SET NX makes refresh-token consumption atomic across application instances.
+export const setIfAbsent = async ({ key, value, ttl }) => {
+    return await client.set(key, String(value), { EX: ttl, NX: true });
+};
+
+// Reserve a verification attempt before the expensive hash comparison.
+export const reserveOtpAttempt = async ({ key, maxAttempts = 5 }) => {
+    return await client.eval(`
+        local challenge = redis.call('GET', KEYS[1])
+        if not challenge then return false end
+        local attempts = redis.call('INCR', KEYS[2])
+        if attempts == 1 then
+            local remaining = redis.call('PTTL', KEYS[1])
+            if remaining > 0 then redis.call('PEXPIRE', KEYS[2], remaining) end
+        end
+        if attempts > tonumber(ARGV[1]) then return false end
+        return challenge
+    `, { keys: [key, `${key}:VERIFY_ATTEMPTS`], arguments: [String(maxAttempts)] });
+};
+
+export const consumeOtp = async ({ key, expected }) => {
+    return await client.eval(`
+        if redis.call('GET', KEYS[1]) ~= ARGV[1] then return 0 end
+        redis.call('DEL', KEYS[1])
+        redis.call('DEL', KEYS[2])
+        return 1
+    `, { keys: [key, `${key}:VERIFY_ATTEMPTS`], arguments: [expected] });
+};

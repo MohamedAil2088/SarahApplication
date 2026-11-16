@@ -17,7 +17,7 @@ import { UserModel } from "../../DB/model/user.model.js";
 import { TokenTypeEnum } from "../../enum/security.enum.js";
 import { RoleEnum } from "../../enum/user.gender.js";
 import {randomUUID} from 'node:crypto'
-import { exists, set } from "../services/index.js";
+import { exists, setIfAbsent } from "../services/index.js";
 import { compare } from "./hash.security.js";
 
 export const userBaseKey = ({userId})=>{
@@ -152,10 +152,10 @@ export const createLoginCredentials = async ({
 
 export const creatRevokeToken = async (payload) => {
   const now = Math.floor(Date.now() / 1000);
-  const expiryTimestamp = payload.exp || (payload.iat + REFRESH_TOKEN_EXPIERS_IN);
+  const expiryTimestamp = Math.max(payload.exp || 0, payload.iat + REFRESH_TOKEN_EXPIERS_IN);
   const ttl = expiryTimestamp - now;
-  if (ttl <= 0) return;
-  await set({
+  if (ttl <= 0) throw UnauthorizedException('Expired login credentials');
+  return await setIfAbsent({
     key: userRevokrTokevKey({ userId: payload.sub, jti: payload.jti }),
     value: payload.jti,
     ttl

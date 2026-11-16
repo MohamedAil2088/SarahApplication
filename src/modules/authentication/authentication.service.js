@@ -2,13 +2,25 @@ import { ConflictException, ConflictExecuption, NotFoundExecuption, TooManyReque
 import { findOne, createOne, updateOne } from "../../common/repository/base.respository/index.js";
 import { UserModel } from "./../../DB/model/user.model.js";
 import { compare, hash, encryption, createLoginCredentials, userProfileKey, userLoginAttemptsKey, userBaseRevokrTokevKey } from "../../common/security/index.js";
-import { set, get, del, ttl, incrBy, expire, keys, incr } from "../../common/services/cache.service.js";
-import { creatOtp, emailEvent, UserEmailKey, UserEmailtrialsKey } from "../../common/utils/index.js";
+import { set, get, del, ttl, incrBy, expire, keys, incr, reserveOtpAttempt, consumeOtp } from "../../common/services/cache.service.js";
+import { creatOtp, UserEmailKey, UserEmailtrialsKey } from "../../common/utils/index.js";
 import { EmailSubjectEnum } from "../../enum/email.enum.js";
 import { RoleEnum, LanguageEnum } from "../../enum/index.js";
+import { sendOtpEmail } from "../../common/utils/email/email.event.js";
 
 const MAX_LOGIN_ATEMPTS = 5;
 const LOCKOUT_DURATION = 900;
+
+const verifyEmailOtp = async ({ email, subject, otp, consume = true }) => {
+  const key = UserEmailKey({ email, subject });
+  const expected = await reserveOtpAttempt({ key, maxAttempts: 5 });
+  if (!expected || !(await compare(String(otp), expected))) {
+    throw ConflictException("Invalid or expired OTP, or verification limit reached");
+  }
+  if (consume && !(await consumeOtp({ key, expected }))) {
+    throw ConflictException("OTP has already been used or expired");
+  }
+};
 
 const sendEmailOtp = async ({ email, subject = EmailSubjectEnum.CONFIRM_EMAIL, lang = "en", expiresIn = 120, maxTrials = 3, blockInSeconds = 300, title }) => {
 
@@ -35,12 +47,17 @@ const sendEmailOtp = async ({ email, subject = EmailSubjectEnum.CONFIRM_EMAIL, l
   if (currentTrials === 1 || currentTrials >= maxTrials) {
     await expire({ key: UserEmailtrialsKey({ email, subject }), ttl: blockInSeconds });
   }
-  emailEvent.emit("sendEmail", {
-    recipient: { to: email },
-    subject,
-    data: { code, title: title ?? subject },
-    lang
-  });
+  try {
+    await sendOtpEmail({
+      recipient: { to: email },
+      subject,
+      data: { code, title: title ?? subject },
+      lang
+    });
+  } catch (error) {
+    await del({ key: UserEmailKey({ email, subject }) });
+    throw error;
+  }
 };
 export const signup = async ({ email, password, username, DOB, gender, phone }, lang = "en") => {
   const duplicatedAccount = await findOne({
@@ -59,6 +76,8 @@ export const signup = async ({ email, password, username, DOB, gender, phone }, 
       email,
       password: await hash(password),
       username,
+      DOB,
+      gender,
       phone: await encryption(phone),
       role: RoleEnum.USER,
       language: userLang
@@ -83,22 +102,10 @@ export const confirmEmail = async ({ email, code, otp }) => {
   });
   if (!account) throw NotFoundExecuption("not exist");
 
-  const inputOtp = String(code || otp);
-  const hashOtp = await get({
-    key: UserEmailKey({ email, subject: EmailSubjectEnum.CONFIRM_EMAIL })
-  });
-
-  if (!hashOtp || !await compare(inputOtp, hashOtp)) {
-    throw ConflictException("Invalid OTP");
-  }
+  await verifyEmailOtp({ email, subject: EmailSubjectEnum.CONFIRM_EMAIL, otp: code || otp });
 
   account.confirmEmail = new Date();
   await account.save();
-
-  const userOtpKeys = await keys({ prefix: UserEmailKey({ email, subject: EmailSubjectEnum.CONFIRM_EMAIL }) });
-  if (userOtpKeys?.length) {
-    await del({ key: userOtpKeys });
-  }
 
   return;
 };
@@ -153,19 +160,14 @@ export const verfiyForgotPasswordCode = async ({ email, code, otp }) => {
   });
   if (!account) throw NotFoundExecuption("not exist");
 
-  const inputOtp = String(code || otp);
-  const hashOtp = await get({
-    key: UserEmailKey({ email, subject: EmailSubjectEnum.FORGET_PASSWORD })
-  });
-
-  if (!hashOtp || !await compare(inputOtp, hashOtp)) {
-    throw ConflictException("Invalid OTP");
-  }
+  await verifyEmailOtp({ email, subject: EmailSubjectEnum.FORGET_PASSWORD, otp: code || otp, consume: false });
   return account;
 };
 
 export const resetForgetPassword = async ({ email, otp, password }) => {
-  const account = await verfiyForgotPasswordCode({ otp, email })
+  const account = await findOne({ model: UserModel, filter: { email, confirmEmail: { $exists: true } } });
+  if (!account) throw NotFoundExecuption("Invalid account");
+  await verifyEmailOtp({ email, subject: EmailSubjectEnum.FORGET_PASSWORD, otp });
   account.password = await hash(password)
   account.changeCredentialTime = new Date();
   await account.save();
@@ -254,20 +256,7 @@ export const verfiyLoginOtp = async ({ email, otp }, issuer) => {
     filter: { email, confirmEmail: { $exists: true } }
   })
   if (!account) throw NotFoundExecuption("Acccount not found");
-  const inputOtp = String(otp);
-  const hashOtp = await get({
-    key: UserEmailKey({ email, subject: EmailSubjectEnum.TWO_STEP_VERIFICATION })
-
-  });
-  if (!hashOtp || !(await compare(inputOtp, hashOtp))) {
-    throw ConflictException("Invailed or expired OTP")
-  };
-  const userOtpKeys = await keys({
-    prefix: UserEmailKey({ email, subject: EmailSubjectEnum.TWO_STEP_VERIFICATION })
-  });
-  if (userOtpKeys?.length) {
-    await del({ key: userOtpKeys })
-  }
+  await verifyEmailOtp({ email, subject: EmailSubjectEnum.TWO_STEP_VERIFICATION, otp });
   const credentials = await createLoginCredentials({ user: account, issuer });
   const profileData = account.toObject ? account.toObject() : { ...account };
   delete profileData.password;

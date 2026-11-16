@@ -18,7 +18,7 @@ router.post(
         next()
     },
     uploadMiddleware({
-        multerMiddleware: localFileUpload().any("attachments", 3),
+        multerMiddleware: localFileUpload().array("attachments", 3),
         validation: fileValidation.Image,
         customPath: messageFolderName,
         isRequired: false

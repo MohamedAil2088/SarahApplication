@@ -26,24 +26,20 @@ export const sendEmail = async ({
   attachments 
 }) => {
 
-  try {
-    if (!to?.length && !cc?.length  && !bcc?.length) {
-      throw BadRequestException("Missing email recipient")
-    }
-    if (!text?.length && !html?.length  && !attachments?.length) {
-      throw BadRequestException("Missing email content")
-    }
-    const info = await transporter.sendMail({
-      from: `"${APPLECATION_NAME}" <${APP_EMAIL}>`,
-      to,
-      cc,
-      bcc,
-      subject,
-      text,
-      html,
-      attachments
-    });
-  } catch (err) {
-    console.error("Error while sending mail:", err);
+  if (!to?.length && !cc?.length && !bcc?.length) {
+    throw BadRequestException("Missing email recipient");
   }
+  if (!text?.length && !html?.length && !attachments?.length) {
+    throw BadRequestException("Missing email content");
+  }
+  return await transporter.sendMail({
+    from: `"${APPLECATION_NAME}" <${APP_EMAIL}>`,
+    to,
+    cc,
+    bcc,
+    subject,
+    text,
+    html,
+    attachments
+  });
 }

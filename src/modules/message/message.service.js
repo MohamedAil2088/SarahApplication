@@ -3,6 +3,12 @@ import { findUserById } from "../../common/repository/base.respository/user.repo
 import { MessageTypeEnum } from "../../enum/index.js";
 import * as messageRepo from "../../common/repository/base.respository/message.repository.js";
 
+const anonymousMessage = (message) => {
+    const result = message.toObject ? message.toObject() : { ...message };
+    delete result.senderId;
+    return result;
+};
+
 export const creatMessage = async ({ content, receiverId } = {}, files = [], user = undefined) => {
     if (user && user._id.toString() === receiverId.toString()) {
         throw BadRequestException("You cannot send an anonymous message to yourself");
@@ -17,7 +23,7 @@ export const creatMessage = async ({ content, receiverId } = {}, files = [], use
             ...(user ? { senderId: user._id } : {})
         }
     });
-    return message;
+    return anonymousMessage(message);
 };
 
 export const deleteMessage = async ({ messageId } = {}, user) => {
@@ -40,7 +46,8 @@ export const getAllMessage = async ({ type, page, limit } = {}, user) => {
         }
     };
     const filter = filterStrategies[type] || filterStrategies[MessageTypeEnum.ALL];
-    return await messageRepo.paginateMessages({ filter, page, limit });
+    const result = await messageRepo.paginateMessages({ filter, page, limit });
+    return { ...result, docs: result.docs.map(anonymousMessage) };
 };
 
 export const getMessage = async ({ messageId } = {}, user) => {
@@ -51,5 +58,5 @@ export const getMessage = async ({ messageId } = {}, user) => {
         }
     });
     if (!message) throw NotFoundException("Message not found or you are not authorized to view it");
-    return message;
+    return anonymousMessage(message);
 };

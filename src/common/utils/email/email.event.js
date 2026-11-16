@@ -5,8 +5,7 @@ import { EmailSubjectMap, LanguageEnum } from "../../../enum/index.js";
 
 export const emailEvent = new EventEmitter();
 
-emailEvent.on("sendEmail", async ({ recipient, subject, data, lang = LanguageEnum.EN }) => {
-    try {
+export const sendOtpEmail = async ({ recipient, subject, data, lang = LanguageEnum.EN }) => {
         const isAr = lang === LanguageEnum.AR || lang === "ar" || lang === 0 || lang === "0";
         const targetLang = isAr ? LanguageEnum.AR : LanguageEnum.EN;
         const emailSubject = EmailSubjectMap?.[targetLang]?.[subject] || subject;
@@ -20,7 +19,8 @@ emailEvent.on("sendEmail", async ({ recipient, subject, data, lang = LanguageEnu
                 lang: targetLang
             })
         });
-    } catch (error) {
-        console.error("Email Event Error:", error);
-    }
+};
+
+emailEvent.on("sendEmail", (payload) => {
+    sendOtpEmail(payload).catch((error) => console.error("Email Event Error:", error));
 });

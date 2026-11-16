@@ -6,7 +6,7 @@ import { Validation } from "../../middleware/validation.middleware.js";
 const router = Router();
 
 router.post("/signup", Validation(validators.signup), async (req, res, next) => {
-    const data = await signup(req.body, req.lang);
+    const data = await signup(req.validate.body, req.lang);
     return successResponse({ res, status: 201, data });
 });
 

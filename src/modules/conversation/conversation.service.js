@@ -7,6 +7,7 @@ import {
 import * as messageRepo from "../../common/repository/base.respository/message.repository.js";
 import * as conversationRepo from "../../common/repository/base.respository/conversation.repository.js";
 import { RequestStatusEnum } from "../../enum/index.js";
+import mongoose from "mongoose";
 
 export const requestSenderIdentity = async ({ messageId } = {}, user) => {
     const message = await messageRepo.findMessageById({ id: messageId });
@@ -29,7 +30,7 @@ export const requestSenderIdentity = async ({ messageId } = {}, user) => {
         throw ConflictException("An identity request for this message already exists");
     }
 
-    return await conversationRepo.createIdentityRequest({
+    const request = await conversationRepo.createIdentityRequest({
         data: {
             messageId,
             requesterId: user._id,
@@ -37,6 +38,9 @@ export const requestSenderIdentity = async ({ messageId } = {}, user) => {
             status: RequestStatusEnum.PENDING
         }
     });
+    const result = request.toObject ? request.toObject() : { ...request };
+    delete result.targetSenderId;
+    return result;
 };
 
 export const getReceivedIdentityRequests = async ({ page, limit } = {}, user) => {
@@ -48,51 +52,61 @@ export const getReceivedIdentityRequests = async ({ page, limit } = {}, user) =>
 };
 
 export const respondToIdentityRequest = async ({ requestId, action } = {}, user) => {
-    const request = await conversationRepo.findIdentityRequestById({ id: requestId });
-    if (!request) throw NotFoundException("Identity request not found");
-
-    const targetSenderId = request.targetSenderId?._id || request.targetSenderId;
-    if (targetSenderId.toString() !== user._id.toString()) {
-        throw ForbiddenException("You are not authorized to respond to this request");
+    if (![RequestStatusEnum.ACCEPTED, RequestStatusEnum.REJECTED].includes(action)) {
+        throw BadRequestException("Invalid identity request action");
     }
+    return await mongoose.connection.transaction(async (session) => {
+        const request = await conversationRepo.findIdentityRequestById({ id: requestId, options: { session } });
+        if (!request) throw NotFoundException("Identity request not found");
 
-    if (request.status !== RequestStatusEnum.PENDING) {
-        throw ConflictException("This request has already been processed");
-    }
+        const targetSenderId = request.targetSenderId?._id || request.targetSenderId;
+        if (targetSenderId.toString() !== user._id.toString()) {
+            throw ForbiddenException("You are not authorized to respond to this request");
+        }
 
-    const requesterId = request.requesterId?._id || request.requesterId;
-    const messageId = request.messageId?._id || request.messageId;
+        if (request.status !== RequestStatusEnum.PENDING &&
+            !(request.status === RequestStatusEnum.ACCEPTED && action === RequestStatusEnum.ACCEPTED)) {
+            throw ConflictException("This request has already been processed");
+        }
 
-    if (action === RequestStatusEnum.REJECTED) {
+        const requesterId = request.requesterId?._id || request.requesterId;
+        const messageId = request.messageId?._id || request.messageId;
+
+        if (action === RequestStatusEnum.REJECTED) {
+            await conversationRepo.updateIdentityRequest({
+                filter: { _id: requestId },
+                update: { status: RequestStatusEnum.REJECTED },
+                options: { session }
+            });
+            return { message: "Identity request rejected successfully" };
+        }
+
+        let conversation = await conversationRepo.findOneConversation({
+            filter: { originalMessageId: messageId },
+            options: { session }
+        });
+
+        if (!conversation) {
+            conversation = await conversationRepo.createConversation({
+                data: {
+                    originalMessageId: messageId,
+                    participants: [targetSenderId, requesterId]
+                },
+                options: { session }
+            });
+        }
+
         await conversationRepo.updateIdentityRequest({
             filter: { _id: requestId },
-            update: { status: RequestStatusEnum.REJECTED }
+            update: { status: RequestStatusEnum.ACCEPTED },
+            options: { session }
         });
-        return { message: "Identity request rejected successfully" };
-    }
 
-    await conversationRepo.updateIdentityRequest({
-        filter: { _id: requestId },
-        update: { status: RequestStatusEnum.ACCEPTED }
+        return {
+            message: "Identity request accepted and conversation created",
+            conversation
+        };
     });
-
-    let conversation = await conversationRepo.findOneConversation({
-        filter: { originalMessageId: messageId }
-    });
-
-    if (!conversation) {
-        conversation = await conversationRepo.createConversation({
-            data: {
-                originalMessageId: messageId,
-                participants: [targetSenderId, requesterId]
-            }
-        });
-    }
-
-    return {
-        message: "Identity request accepted and conversation created",
-        conversation
-    };
 };
 
 export const getConversations = async ({ page, limit } = {}, user) => {
@@ -104,31 +118,35 @@ export const getConversations = async ({ page, limit } = {}, user) => {
 };
 
 export const sendConversationMessage = async ({ conversationId, content } = {}, files = [], user) => {
-    const conversation = await conversationRepo.findConversationById({ id: conversationId });
-    if (!conversation) throw NotFoundException("Conversation not found");
+    return await mongoose.connection.transaction(async (session) => {
+        const conversation = await conversationRepo.findConversationById({ id: conversationId, options: { session } });
+        if (!conversation) throw NotFoundException("Conversation not found");
 
-    const isParticipant = conversation.participants.some(
-        (p) => (p._id || p).toString() === user._id.toString()
-    );
-    if (!isParticipant) {
-        throw ForbiddenException("You are not a participant in this conversation");
-    }
-
-    const message = await conversationRepo.createConversationMessage({
-        data: {
-            conversationId,
-            senderId: user._id,
-            content,
-            attachments: files.map((f) => f.path)
+        const isParticipant = conversation.participants.some(
+            (p) => (p._id || p).toString() === user._id.toString()
+        );
+        if (!isParticipant) {
+            throw ForbiddenException("You are not a participant in this conversation");
         }
-    });
 
-    await conversationRepo.updateConversation({
-        filter: { _id: conversationId },
-        update: { lastMessage: message._id }
-    });
+        const message = await conversationRepo.createConversationMessage({
+            data: {
+                conversationId,
+                senderId: user._id,
+                content,
+                attachments: files.map((f) => f.path)
+            },
+            options: { session }
+        });
 
-    return message;
+        await conversationRepo.updateConversation({
+            filter: { _id: conversationId },
+            update: { lastMessage: message._id },
+            options: { session }
+        });
+
+        return message;
+    });
 };
 
 export const getConversationMessages = async ({ conversationId, page, limit } = {}, user) => {
